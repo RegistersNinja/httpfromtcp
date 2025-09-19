@@ -1,21 +1,50 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
 
 	"github.com/RegistersNinja/httpfromtcp/internal/headers"
+	"github.com/RegistersNinja/httpfromtcp/internal/request"
 	"github.com/RegistersNinja/httpfromtcp/internal/response"
 )
 
 type Server struct {
 	listener net.Listener
 	closed   atomic.Bool
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
+type Handler func(w io.Writer, req *request.Request) *HandlerError
+
+type HandlerError struct {
+	StatusCode response.StatusCode
+	Message    string
+}
+
+func writeHandlerError(w io.Writer, he *HandlerError) error {
+	var (
+		err error
+	)
+
+	if he == nil {
+		return nil
+	}
+
+	err = response.WriteStatusLine(w, he.StatusCode)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.WriteString(w, he.Message)
+	return err
+
+}
+
+func Serve(port int, handleFunc Handler) (*Server, error) {
 	var (
 		listener net.Listener
 		err      error
@@ -26,7 +55,7 @@ func Serve(port int) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s = &Server{listener: listener}
+	s = &Server{listener: listener, handler: handleFunc}
 	go s.listen()
 	return s, nil
 }
@@ -61,26 +90,38 @@ func (s *Server) listen() {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	defer conn.Close()
+    defer conn.Close()
+    var (
+        err            error
+        defaultHeaders headers.Headers
+        req            *request.Request
+        buf            bytes.Buffer
+        he             *HandlerError
+    )
 
-	var (
-		err            error
-		body           string
-		defaultHeaders headers.Headers
-	)
+    req, err = request.RequestFromReader(conn)
+    if err != nil {
+        _ = writeHandlerError(conn, &HandlerError{StatusCode: response.StatusBadRequest, Message: err.Error()})
+        return
+    }
 
-	body = "Hello World!"
+    he = s.handler(&buf, req)
+    if he != nil {
+        _ = writeHandlerError(conn, he)
+        return
+    }
 
-	if err = response.WriteStatusLine(conn, response.StatusOK); err != nil {
-		return
-	}
+    defaultHeaders = response.GetDefaultHeaders(buf.Len())
 
-	defaultHeaders = response.GetDefaultHeaders(len(body))
-	if err := response.WriteHeaders(conn, defaultHeaders); err != nil {
-		return
-	}
+    err = response.WriteStatusLine(conn, response.StatusOK)
+    if err != nil {
+        return
+    }
 
-	if _, err = io.WriteString(conn, body); err != nil {
-		return
-	}
+    err = response.WriteHeaders(conn, defaultHeaders)
+    if err != nil {
+        return
+    }
+
+    _, _ = io.Copy(conn, &buf)
 }

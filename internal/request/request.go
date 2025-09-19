@@ -252,14 +252,21 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 		readToIndex += bytesRead
 
-		bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
-		if err != nil {
-			return nil, fmt.Errorf("parse error: %s", err)
-		} else if bytesParsed != 0 {
-			copy(buf, buf[bytesParsed:readToIndex])
-			clear(buf[readToIndex-bytesParsed : readToIndex])
-			readToIndex -= bytesParsed
-		}
+        for {
+            bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
+            if err != nil {
+                return nil, fmt.Errorf("parse error: %s", err)
+            }
+            if bytesParsed == 0 {
+                break
+            }
+            copy(buf, buf[bytesParsed:readToIndex])
+            clear(buf[readToIndex-bytesParsed : readToIndex])
+            readToIndex -= bytesParsed
+            if parsedRequest.state == done {
+                break
+            }
+        }
 	}
 
 	return parsedRequest, nil
