@@ -27,27 +27,18 @@ func main() {
 	}
 
 
-	bytesRead, err = messages.Read(buffer)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read from file: %v\n", err)
-		os.Exit(1)
-	}
-
-	for(bytesRead == 8) {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to read from file: %v\n", err)
-			os.Exit(1)
-		}
-		
-		fmt.Printf("read: %s\n", string(buffer))
-		clear(buffer)
+	for {
 		bytesRead, err = messages.Read(buffer)
+		if err != nil {
+			if err.Error() != "EOF" {
+				fmt.Fprintf(os.Stderr, "failed to read from file: %v\n", err)
+				os.Exit(1)
+			}
+			break
+		}
+		if bytesRead > 0 {
+			fmt.Printf("read: %s\n", string(buffer))
+		}
 	}
 	
-	if err == nil {
-		fmt.Printf("read: %s\n", string(buffer))
-	} else {
-			fmt.Fprintf(os.Stderr, "failed to read from file: %v\n", err)
-			os.Exit(1)
-	}
 }
