@@ -50,7 +50,9 @@ type RequestLine struct {
 }
 
 func isValidHTTPVerb(method string) bool {
-	for _, verb := range getHTTPVerbs() {
+	var verb string
+
+	for _, verb = range getHTTPVerbs() {
 		if method == verb {
 			return true
 		}
@@ -155,6 +157,7 @@ func parseRequestLine(data []byte) (RequestLine, int, error) {
 		target           string
 		version          string
 		bytesRead        int
+		parts            []string
 	)
 	bytesRead = 0
 	dataNewLineSplit = strings.Split(string(data), newLine)
@@ -165,7 +168,7 @@ func parseRequestLine(data []byte) (RequestLine, int, error) {
 
 	requestLine = dataNewLineSplit[0]
 	bytesRead = len(requestLine) + len(newLine)
-	parts := strings.Split(requestLine, " ")
+	parts = strings.Split(requestLine, " ")
 	if len(parts) != numberOfPartsInRequestLine {
 		return RequestLine{}, bytesRead, fmt.Errorf("incorrect request line: expected %d parts, got %d", numberOfPartsInRequestLine, len(parts))
 	}
@@ -252,21 +255,21 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 		readToIndex += bytesRead
 
-        for {
-            bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
-            if err != nil {
-                return nil, fmt.Errorf("parse error: %s", err)
-            }
-            if bytesParsed == 0 {
-                break
-            }
-            copy(buf, buf[bytesParsed:readToIndex])
-            clear(buf[readToIndex-bytesParsed : readToIndex])
-            readToIndex -= bytesParsed
-            if parsedRequest.state == done {
-                break
-            }
-        }
+		for {
+			bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
+			if err != nil {
+				return nil, fmt.Errorf("parse error: %s", err)
+			}
+			if bytesParsed == 0 {
+				break
+			}
+			copy(buf, buf[bytesParsed:readToIndex])
+			clear(buf[readToIndex-bytesParsed : readToIndex])
+			readToIndex -= bytesParsed
+			if parsedRequest.state == done {
+				break
+			}
+		}
 	}
 
 	return parsedRequest, nil

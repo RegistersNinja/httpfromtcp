@@ -29,9 +29,17 @@ func isValidFieldName(fieldName string) bool {
 	return validFieldNameRegex.MatchString(fieldName)
 }
 
-func (h Headers) Get (key string) (string, bool) {
-	value, ok := h[strings.ToLower(key)]
+func (h Headers) Get(key string) (string, bool) {
+	var (
+		value string
+		ok    bool
+	)
+	value, ok = h[strings.ToLower(key)]
 	return value, ok
+}
+
+func (h Headers) OverrideHeaderValue(key string, value string) {
+	h[strings.ToLower(key)] = value
 }
 
 func parseHeader(header []byte) (key string, value string, err error) {

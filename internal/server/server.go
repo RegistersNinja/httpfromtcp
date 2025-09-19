@@ -1,9 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"sync/atomic"
 
@@ -18,30 +16,11 @@ type Server struct {
 	handler  Handler
 }
 
-type Handler func(w io.Writer, req *request.Request) *HandlerError
+type Handler func(w *response.Writer, req *request.Request)
 
 type HandlerError struct {
 	StatusCode response.StatusCode
 	Message    string
-}
-
-func writeHandlerError(w io.Writer, he *HandlerError) error {
-	var (
-		err error
-	)
-
-	if he == nil {
-		return nil
-	}
-
-	err = response.WriteStatusLine(w, he.StatusCode)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.WriteString(w, he.Message)
-	return err
-
 }
 
 func Serve(port int, handleFunc Handler) (*Server, error) {
@@ -90,38 +69,26 @@ func (s *Server) listen() {
 }
 
 func (s *Server) handle(conn net.Conn) {
-    defer conn.Close()
-    var (
-        err            error
-        defaultHeaders headers.Headers
-        req            *request.Request
-        buf            bytes.Buffer
-        he             *HandlerError
-    )
+	defer conn.Close()
+	var (
+		rpWriter *response.Writer
+		req      *request.Request
+		err      error
+		body     []byte
+		hdrs     headers.Headers
+	)
 
-    req, err = request.RequestFromReader(conn)
-    if err != nil {
-        _ = writeHandlerError(conn, &HandlerError{StatusCode: response.StatusBadRequest, Message: err.Error()})
-        return
-    }
+	rpWriter = &response.Writer{Writer: conn}
 
-    he = s.handler(&buf, req)
-    if he != nil {
-        _ = writeHandlerError(conn, he)
-        return
-    }
+	req, err = request.RequestFromReader(conn)
+	if err != nil {
+		rpWriter.WriteStatusLine(response.StatusBadRequest)
+		body = []byte(err.Error())
+		hdrs = response.GetDefaultHeaders(len(body))
+		rpWriter.WriteHeaders(hdrs)
+		rpWriter.WriteBody(body)
+		return
+	}
 
-    defaultHeaders = response.GetDefaultHeaders(buf.Len())
-
-    err = response.WriteStatusLine(conn, response.StatusOK)
-    if err != nil {
-        return
-    }
-
-    err = response.WriteHeaders(conn, defaultHeaders)
-    if err != nil {
-        return
-    }
-
-    _, _ = io.Copy(conn, &buf)
+	s.handler(rpWriter, req)
 }

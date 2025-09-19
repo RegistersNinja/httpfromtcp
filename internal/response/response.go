@@ -1,6 +1,7 @@
 package response
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 
@@ -8,39 +9,64 @@ import (
 )
 
 type StatusCode int
+type writerState int
+
+type Writer struct {
+	Writer      io.Writer
+	writerState writerState
+}
 
 const (
-	StatusOK                  StatusCode = 200
-	StatusBadRequest          StatusCode = 400
-	StatusInternalServerError StatusCode = 500
-	httpVerString             string     = "HTTP/1.1"
-	spaceString               string     = " "
-	lineOKString              string     = "200 OK"
-	lineBRString              string     = "400 Bad Request"
-	lineSEString              string     = "500 Internal Server Error"
-	clString                  string     = "Content-Length"
-	conString                 string     = "Connection"
-	conValString              string     = "close"
-	ctString                  string     = "Content-Type"
-	ctValString               string     = "text/plain"
-	crlfString                string     = "\r\n"
-	colonString               string     = ":"
+	StatusOK                  StatusCode  = 200
+	StatusBadRequest          StatusCode  = 400
+	StatusInternalServerError StatusCode  = 500
+	httpVerString             string      = "HTTP/1.1"
+	spaceString               string      = " "
+	lineOKString              string      = "200 OK"
+	lineBRString              string      = "400 Bad Request"
+	lineSEString              string      = "500 Internal Server Error"
+	clString                  string      = "Content-Length"
+	conString                 string      = "Connection"
+	conValString              string      = "close"
+	ctString                  string      = "Content-Type"
+	ctValString               string      = "text/plain"
+	crlfString                string      = "\r\n"
+	statusLineState           writerState = 0
+	headersState              writerState = 1
+	bodyState                 writerState = 2
 )
 
-func WriteStatusLine(w io.Writer, statusCode StatusCode) error {
-	var err error
-	switch statusCode {
-	case StatusOK:
-		_, err = w.Write([]byte(httpVerString + spaceString + lineOKString + crlfString))
-
-	case StatusBadRequest:
-		_, err = w.Write([]byte(httpVerString + spaceString + lineBRString + crlfString))
-
-	case StatusInternalServerError:
-		_, err = w.Write([]byte(httpVerString + spaceString + lineSEString + crlfString))
+func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
+    switch w.writerState {
+    case statusLineState:
+        break
+	case headersState:
+		return fmt.Errorf("incorrect order of response: first print status line")
+	case bodyState:
+		return fmt.Errorf("incorrect order of response: first print status line")
+	default:
+		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
 
-	return err
+    var (
+        err        error
+        statusLine string
+    )
+
+    statusLine = httpVerString + spaceString
+    switch statusCode {
+    case StatusOK:
+        statusLine += lineOKString
+    case StatusBadRequest:
+        statusLine += lineBRString
+    case StatusInternalServerError:
+        statusLine += lineSEString
+    }
+    statusLine += crlfString
+
+    _, err = w.Writer.Write([]byte(statusLine))
+    w.writerState = headersState
+    return err
 }
 
 func GetDefaultHeaders(contentLen int) headers.Headers {
@@ -53,40 +79,46 @@ func GetDefaultHeaders(contentLen int) headers.Headers {
 	return h
 }
 
-func serializeHeadersMap(h headers.Headers) []string {
+func (w *Writer) WriteHeaders(h headers.Headers) error {
+	switch w.writerState {
+	case statusLineState:
+		return fmt.Errorf("incorrect order of response: first print status line")
+	case headersState:
+		break
+	case bodyState:
+		return fmt.Errorf("incorrect order of response: first print headers")
+	default:
+		return fmt.Errorf("incorrect order of response: unknown writer state")
+	}
 	var (
-		responseStrings []string
-		keys            []string
-		key             string
-		index           int
+		key            string
+		value          string
+		headersToWrite []byte
+		err            error
 	)
 
-	keys = make([]string, 0, len(h))
-	for key = range h {
-		keys = append(keys, key)
+	for key, value = range h {
+		headersToWrite = fmt.Appendf(headersToWrite, "%s: %s\r\n", key, value)
 	}
 
-	responseStrings = make([]string, len(keys))
-	for index, key = range keys {
-		responseStrings[index] = key + colonString + spaceString + h[key] + crlfString
-	}
-
-	return responseStrings
+	headersToWrite = fmt.Append(headersToWrite, crlfString)
+	_, err = w.Writer.Write(headersToWrite)
+	w.writerState = bodyState
+	return err
 }
 
-func WriteHeaders(w io.Writer, h headers.Headers) error {
-	var (
-		lines []string
-		line  string
-		err   error
-	)
-
-	lines = serializeHeadersMap(h)
-	for _, line = range lines {
-		if _, err = io.WriteString(w, line); err != nil {
-			return err
-		}
+func (w *Writer) WriteBody(body []byte) (err error) {
+	switch w.writerState {
+	case statusLineState:
+		return fmt.Errorf("incorrect order of response: first print status line")
+	case headersState:
+		return fmt.Errorf("incorrect order of response: first print headers")
+	case bodyState:
+		break
+	default:
+		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
-	_, err = io.WriteString(w, crlfString)
+	_, err = w.Writer.Write(body)
+	
 	return err
 }
