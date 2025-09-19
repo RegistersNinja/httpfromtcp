@@ -58,16 +58,16 @@ func isValidHTTPVer(version string) bool {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
-    var (
-        bytesParsed int
-        reqLine     RequestLine
-        err         error
-        status      bool
-    )
+	var (
+		bytesParsed int
+		reqLine     RequestLine
+		err         error
+		status      bool
+	)
 
-    switch r.state {
-    case initialized:
-        reqLine, bytesParsed, err = parseRequestLine(data)
+	switch r.state {
+	case initialized:
+		reqLine, bytesParsed, err = parseRequestLine(data)
 
 		if err != nil {
 			return zeroBytesParsed, err
@@ -80,23 +80,23 @@ func (r *Request) parse(data []byte) (int, error) {
 		r.state = requestStateParsingHeaders
 		return bytesParsed, nil
 
-    case requestStateParsingHeaders:
-        bytesParsed, status, err = r.Headers.Parse(data)
-        if err != nil {
-            return zeroBytesParsed, err
-        }
-        if bytesParsed == 0 {
-            return zeroBytesParsed, nil
-        }
-        if status {
-            r.state = done
-        }
-        return bytesParsed, nil
-    case done:
-        return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
-    default:
-        return zeroBytesParsed, fmt.Errorf("error: unknown state")
-    }
+	case requestStateParsingHeaders:
+		bytesParsed, status, err = r.Headers.Parse(data)
+		if err != nil {
+			return zeroBytesParsed, err
+		}
+		if bytesParsed == 0 {
+			return zeroBytesParsed, nil
+		}
+		if status {
+			r.state = done
+		}
+		return bytesParsed, nil
+	case done:
+		return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
+	default:
+		return zeroBytesParsed, fmt.Errorf("error: unknown state")
+	}
 
 }
 
