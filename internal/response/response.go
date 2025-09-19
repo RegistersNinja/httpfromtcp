@@ -34,7 +34,8 @@ const (
 	statusLineState           writerState = 0
 	headersState              writerState = 1
 	bodyState                 writerState = 2
-	chunkDone                 byte      = byte('0')
+	trailersState             writerState = 3
+	chunkDone                 byte        = byte('0')
 )
 
 func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
@@ -45,6 +46,8 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 		return fmt.Errorf("incorrect order of response: first print status line")
 	case bodyState:
 		return fmt.Errorf("incorrect order of response: first print status line")
+	case trailersState:
+		return fmt.Errorf("incorrect order of response: response already completed")
 	default:
 		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
@@ -88,6 +91,8 @@ func (w *Writer) WriteHeaders(h headers.Headers) error {
 		break
 	case bodyState:
 		return fmt.Errorf("incorrect order of response: first print headers")
+	case trailersState:
+		return fmt.Errorf("incorrect order of response: response already completed")
 	default:
 		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
@@ -116,6 +121,8 @@ func (w *Writer) WriteBody(body []byte) (err error) {
 		return fmt.Errorf("incorrect order of response: first print headers")
 	case bodyState:
 		break
+	case trailersState:
+		return fmt.Errorf("incorrect order of response: response already completed")
 	default:
 		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
@@ -125,36 +132,88 @@ func (w *Writer) WriteBody(body []byte) (err error) {
 }
 
 func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
-    var (
-        err         error
-        bytesHex    string
-        bodyToWrite []byte
-        bodyLength  int
-    )
+	switch w.writerState {
+	case statusLineState:
+		return 0, fmt.Errorf("incorrect order of response: first print status line")
+	case headersState:
+		return 0, fmt.Errorf("incorrect order of response: first print headers")
+	case bodyState:
+		break
+	case trailersState:
+		return 0, fmt.Errorf("incorrect order of response: response already completed")
+	default:
+		return 0, fmt.Errorf("incorrect order of response: unknown writer state")
+	}
 
-    bodyLength = len(p)
-    bytesHex = strconv.FormatInt(int64(bodyLength), 16)
+	var (
+		err         error
+		bytesHex    string
+		bodyToWrite []byte
+		bodyLength  int
+	)
 
-    bodyToWrite = append(bodyToWrite, []byte(bytesHex)...)
-    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
-    bodyToWrite = append(bodyToWrite, p...)
-    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+	bodyLength = len(p)
+	bytesHex = strconv.FormatInt(int64(bodyLength), 16)
 
-    err = w.WriteBody(bodyToWrite)
-    return bodyLength, err
+	bodyToWrite = append(bodyToWrite, []byte(bytesHex)...)
+	bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+	bodyToWrite = append(bodyToWrite, p...)
+	bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+
+	err = w.WriteBody(bodyToWrite)
+	return bodyLength, err
 
 }
 
-func (w *Writer) WriteChunkedBodyDone() (int, error) {
-    var (
-        bodyToWrite []byte
-        err         error
-    )
+func (w *Writer) writeChunkedBodyDone() error {
+	var (
+		err         error
+		bodyToWrite []byte
+	)
 
-    bodyToWrite = append(bodyToWrite, chunkDone)
-    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
-    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+	bodyToWrite = append(bodyToWrite, chunkDone)
+	bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
 
-    err = w.WriteBody(bodyToWrite)
-    return len(bodyToWrite), err
+	_, err = w.Writer.Write(bodyToWrite)
+	if err != nil {
+		return err
+	}
+
+	w.writerState = trailersState
+	return nil
+}
+
+func (w *Writer) WriteTrailers(t headers.Headers) error {
+	switch w.writerState {
+	case statusLineState:
+		return fmt.Errorf("incorrect order of response: first print status line")
+	case headersState:
+		return fmt.Errorf("incorrect order of response: first print headers")
+	case bodyState:
+		break
+	case trailersState:
+		return fmt.Errorf("incorrect order of response: response already completed")
+	default:
+		return fmt.Errorf("incorrect order of response: unknown writer state")
+	}
+
+	var (
+		key             string
+		value           string
+		trailersToWrite []byte
+		err             error
+	)
+
+	err = w.writeChunkedBodyDone()
+	if err != nil {
+		return err
+	}
+
+	for key, value = range t {
+		trailersToWrite = fmt.Appendf(trailersToWrite, "%s: %s"+crlfString, key, value)
+	}
+
+	trailersToWrite = fmt.Append(trailersToWrite, crlfString)
+	_, err = w.Writer.Write(trailersToWrite)
+	return err
 }
