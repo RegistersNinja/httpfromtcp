@@ -2,8 +2,12 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
+
+	"github.com/RegistersNinja/httpfromtcp/internal/headers"
+	"github.com/RegistersNinja/httpfromtcp/internal/response"
 )
 
 type Server struct {
@@ -57,10 +61,26 @@ func (s *Server) listen() {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	var response []byte
-
 	defer conn.Close()
-	response = []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 12\r\n\r\nHello World!")
-	// Dropping the variables here because the response is the same for any request
-	_, _ = conn.Write(response)
+
+	var (
+		err            error
+		body           string
+		defaultHeaders headers.Headers
+	)
+
+	body = "Hello World!"
+
+	if err = response.WriteStatusLine(conn, response.StatusOK); err != nil {
+		return
+	}
+
+	defaultHeaders = response.GetDefaultHeaders(len(body))
+	if err := response.WriteHeaders(conn, defaultHeaders); err != nil {
+		return
+	}
+
+	if _, err = io.WriteString(conn, body); err != nil {
+		return
+	}
 }
