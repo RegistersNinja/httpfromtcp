@@ -23,6 +23,13 @@ const (
 
 	proxyPath string = "https://httpbin.org/"
 
+	pathHttpbinPrefix string = "/httpbin/"
+	pathYourProblem   string = "/yourproblem"
+	pathMyProblem     string = "/myproblem"
+	pathVideo         string = "/video"
+
+	assetVideoFile string = "assets/vim.mp4"
+
 	headerContentType   string = "Content-Type"
 	headerConnection    string = "Connection"
 	headerTransferEnc   string = "Transfer-Encoding"
@@ -37,6 +44,8 @@ const (
 	connectionClose         string = "close"
 	transferEncodingChunked string = "chunked"
 	defaultProxyBufferSize  int    = 1024
+
+	contentTypeVideoMP4 string = "video/mp4"
 )
 
 func respond400() []byte {
@@ -102,12 +111,13 @@ func main() {
 			hash             [sha256.Size]byte
 			hashString       string
 			contentLenString string
+			videoData        []byte
 		)
 
 		requestTarget = req.RequestLine.RequestTarget
 		switch {
-		case strings.HasPrefix(requestTarget, "/httpbin/"):
-			path = strings.TrimPrefix(requestTarget, "/httpbin/")
+		case strings.HasPrefix(requestTarget, pathHttpbinPrefix):
+			path = strings.TrimPrefix(requestTarget, pathHttpbinPrefix)
 			url = proxyPath + path
 
 			resp, err = http.Get(url)
@@ -157,11 +167,29 @@ func main() {
 			}
 			handled = true
 
-		case requestTarget == "/yourproblem":
+		case requestTarget == pathVideo:
+			videoData, err = os.ReadFile(assetVideoFile)
+			if err != nil {
+				status = response.StatusInternalServerError
+				body = respond500()
+				break
+			}
+
+			status = response.StatusOK
+			hdrs = headers.NewHeaders()
+			hdrs.OverrideHeaderValue(headerContentLength, strconv.Itoa(len(videoData)))
+			hdrs.OverrideHeaderValue(headerConnection, connectionClose)
+			hdrs.OverrideHeaderValue(headerContentType, contentTypeVideoMP4)
+			_ = w.WriteStatusLine(status)
+			_ = w.WriteHeaders(hdrs)
+			_ = w.WriteBody(videoData)
+			handled = true
+
+		case requestTarget == pathYourProblem:
 			status = response.StatusBadRequest
 			body = respond400()
 
-		case requestTarget == "/myproblem":
+		case requestTarget == pathMyProblem:
 			status = response.StatusInternalServerError
 			body = respond500()
 
