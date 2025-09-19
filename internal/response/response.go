@@ -34,12 +34,13 @@ const (
 	statusLineState           writerState = 0
 	headersState              writerState = 1
 	bodyState                 writerState = 2
+	chunkDone                 byte      = byte('0')
 )
 
 func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
-    switch w.writerState {
-    case statusLineState:
-        break
+	switch w.writerState {
+	case statusLineState:
+		break
 	case headersState:
 		return fmt.Errorf("incorrect order of response: first print status line")
 	case bodyState:
@@ -48,25 +49,25 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
 
-    var (
-        err        error
-        statusLine string
-    )
+	var (
+		err        error
+		statusLine string
+	)
 
-    statusLine = httpVerString + spaceString
-    switch statusCode {
-    case StatusOK:
-        statusLine += lineOKString
-    case StatusBadRequest:
-        statusLine += lineBRString
-    case StatusInternalServerError:
-        statusLine += lineSEString
-    }
-    statusLine += crlfString
+	statusLine = httpVerString + spaceString
+	switch statusCode {
+	case StatusOK:
+		statusLine += lineOKString
+	case StatusBadRequest:
+		statusLine += lineBRString
+	case StatusInternalServerError:
+		statusLine += lineSEString
+	}
+	statusLine += crlfString
 
-    _, err = w.Writer.Write([]byte(statusLine))
-    w.writerState = headersState
-    return err
+	_, err = w.Writer.Write([]byte(statusLine))
+	w.writerState = headersState
+	return err
 }
 
 func GetDefaultHeaders(contentLen int) headers.Headers {
@@ -119,6 +120,41 @@ func (w *Writer) WriteBody(body []byte) (err error) {
 		return fmt.Errorf("incorrect order of response: unknown writer state")
 	}
 	_, err = w.Writer.Write(body)
-	
+
 	return err
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+    var (
+        err         error
+        bytesHex    string
+        bodyToWrite []byte
+        bodyLength  int
+    )
+
+    bodyLength = len(p)
+    bytesHex = strconv.FormatInt(int64(bodyLength), 16)
+
+    bodyToWrite = append(bodyToWrite, []byte(bytesHex)...)
+    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+    bodyToWrite = append(bodyToWrite, p...)
+    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+
+    err = w.WriteBody(bodyToWrite)
+    return bodyLength, err
+
+}
+
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+    var (
+        bodyToWrite []byte
+        err         error
+    )
+
+    bodyToWrite = append(bodyToWrite, chunkDone)
+    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+    bodyToWrite = append(bodyToWrite, []byte(crlfString)...)
+
+    err = w.WriteBody(bodyToWrite)
+    return len(bodyToWrite), err
 }

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/RegistersNinja/httpfromtcp/internal/headers"
@@ -59,31 +62,91 @@ func main() {
 		sigChan chan os.Signal
 	)
 
-	handler = func(w *response.Writer, req *request.Request) {
-		var (
-			status  response.StatusCode
-			headers headers.Headers
-			body    []byte
-		)
+		handler = func(w *response.Writer, req *request.Request) {
+			var (
+				status response.StatusCode
+				hdrs   headers.Headers
+				body   []byte
+				path   string
+				url    string
+				resp   *http.Response
+				ct     string
+				buf    []byte
+				n      int
+				rerr   error
+				handled bool
+				requestTarget string
+			)
 
-		status = response.StatusOK
-		body = respond200()
-		headers = response.GetDefaultHeaders(len(body))
+		const proxyPath string = "https://httpbin.org/"
+		requestTarget = req.RequestLine.RequestTarget  
+		switch {
+		case strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/"):
+			path = strings.TrimPrefix(req.RequestLine.RequestTarget, "/httpbin/")
+			url = proxyPath + path
 
-		switch req.RequestLine.RequestTarget {
-		case "/yourproblem":
+			resp, err = http.Get(url)
+			if err != nil {
+				status = response.StatusInternalServerError
+				body = respond500()
+				hdrs = response.GetDefaultHeaders(len(body))
+				hdrs.OverrideHeaderValue("Content-Length", strconv.Itoa(len(body)))
+				w.WriteStatusLine(status)
+				w.WriteHeaders(hdrs)
+				w.WriteBody(body)
+				return
+			}
+			defer resp.Body.Close()
+
+			w.WriteStatusLine(response.StatusOK)
+			hdrs = headers.NewHeaders()
+			ct = resp.Header.Get("Content-Type")
+			if ct != "" {
+				hdrs.OverrideHeaderValue("Content-Type", ct)
+			}
+			hdrs.OverrideHeaderValue("Connection", "close")
+			hdrs.OverrideHeaderValue("Transfer-Encoding", "chunked")
+			w.WriteHeaders(hdrs)
+
+			buf = make([]byte, 1024)
+			for {
+				n, rerr = resp.Body.Read(buf)
+				if n > 0 {
+					_, _ = w.WriteChunkedBody(buf[:n])
+				}
+				if rerr == io.EOF {
+					_, _ = w.WriteChunkedBodyDone()
+					break
+				}
+				if rerr != nil {
+					// Abort on read error
+					break
+				}
+				}
+				handled = true
+
+		case requestTarget == "/yourproblem":
 			status = response.StatusBadRequest
 			body = respond400()
-		case "/myproblem":
+
+		case requestTarget == "/myproblem":
 			status = response.StatusInternalServerError
 			body = respond500()
+
+		default:
+			status = response.StatusOK
+			body = respond200()
 		}
 
-		headers.OverrideHeaderValue("Content-Length", strconv.Itoa(len(body)))
-		w.WriteStatusLine(status)
-		w.WriteHeaders(headers)
-		w.WriteBody(body)
-	}
+			// Non-proxy: fixed-length response
+			if !handled {
+				hdrs = response.GetDefaultHeaders(len(body))
+				hdrs.OverrideHeaderValue("Content-Length", strconv.Itoa(len(body)))
+				_ = w.WriteStatusLine(status)
+				_ = w.WriteHeaders(hdrs)
+				_ = w.WriteBody(body)
+			}
+		}
 
 	srv, err = server.Serve(port, handler)
 	if err != nil {
