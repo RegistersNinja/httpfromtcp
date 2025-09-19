@@ -3,6 +3,7 @@ package request
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/RegistersNinja/httpfromtcp/internal/headers"
@@ -19,12 +20,15 @@ const (
 	bufferSize                 int    = 8
 	initialized                int    = 0
 	done                       int    = 1
-	requestStateParsingHeaders int    = 3
+	stateParsingHeaders        int    = 2
+	stateParsingBody           int    = 3
 	twice                      int    = 2
 	ExitError                  int    = 1
 	ExitSuccess                int    = 0
 	newLine                    string = "\r\n"
 	zeroBytesParsed            int    = 0
+	clHeader                   string = "Content-Length"
+	emptyStr                   string = ""
 )
 
 func getHTTPVerbs() []string {
@@ -35,6 +39,7 @@ func getHTTPVerbs() []string {
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        string
 	state       int
 }
 
@@ -59,10 +64,14 @@ func isValidHTTPVer(version string) bool {
 
 func (r *Request) parse(data []byte) (int, error) {
 	var (
-		bytesParsed int
-		reqLine     RequestLine
-		err         error
-		status      bool
+		bytesParsed     int
+		reqLine         RequestLine
+		err             error
+		status          bool
+		clValue         string
+		clStr           string
+		contentLength   int
+		bodyBytesParsed int
 	)
 
 	switch r.state {
@@ -77,10 +86,10 @@ func (r *Request) parse(data []byte) (int, error) {
 		}
 
 		r.RequestLine = reqLine
-		r.state = requestStateParsingHeaders
+		r.state = stateParsingHeaders
 		return bytesParsed, nil
 
-	case requestStateParsingHeaders:
+	case stateParsingHeaders:
 		bytesParsed, status, err = r.Headers.Parse(data)
 		if err != nil {
 			return zeroBytesParsed, err
@@ -89,9 +98,47 @@ func (r *Request) parse(data []byte) (int, error) {
 			return zeroBytesParsed, nil
 		}
 		if status {
-			r.state = done
+			clValue, _ = r.Headers.Get(clHeader)
+			if clValue == emptyStr {
+				// No Content-Length provided: treat as zero-length body and finish.
+				r.state = done
+			} else {
+				contentLength, err = strconv.Atoi(clValue)
+				if err != nil {
+					return zeroBytesParsed, fmt.Errorf("invalid Content-Length: %q", clValue)
+				}
+				if contentLength < 0 {
+					return zeroBytesParsed, fmt.Errorf("expected non negative values for length but got %d", contentLength)
+				}
+
+				if contentLength == 0 {
+					r.state = done
+				} else {
+					r.state = stateParsingBody
+				}
+			}
 		}
 		return bytesParsed, nil
+
+	case stateParsingBody:
+		clStr, _ = r.Headers.Get(clHeader)
+		contentLength, err = strconv.Atoi(clStr)
+		if err != nil {
+			return zeroBytesParsed, fmt.Errorf("invalid Content-Length: %q", clStr)
+		}
+		if contentLength < 0 {
+			return zeroBytesParsed, fmt.Errorf("expected non negative values for length but got %d", contentLength)
+		}
+
+		bodyBytesParsed = min(contentLength-len(r.Body), len(data))
+		if bodyBytesParsed < 0 {
+			bodyBytesParsed = 0
+		}
+		r.Body += string(data[:bodyBytesParsed])
+		if len(r.Body) == contentLength {
+			r.state = done
+		}
+		return bodyBytesParsed, nil
 	case done:
 		return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
 	default:
@@ -150,6 +197,8 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		bytesParsed   int
 		err           error
 		parsedRequest *Request
+		clStr         string
+		contentLength int
 	)
 
 	buf = make([]byte, bufferSize)
@@ -170,14 +219,30 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if err != nil {
 			if err == io.EOF {
 				if readToIndex > 0 {
-					bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
-					if err != nil {
-						return nil, fmt.Errorf("parse error: %s", err)
-					}
-					if bytesParsed > 0 {
+					for {
+						if parsedRequest.state == done {
+							break
+						}
+						bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
+						if err != nil {
+							return nil, fmt.Errorf("parse error: %s", err)
+						}
+						if bytesParsed == 0 {
+							break
+						}
 						copy(buf, buf[bytesParsed:readToIndex])
 						clear(buf[readToIndex-bytesParsed : readToIndex])
 						readToIndex -= bytesParsed
+					}
+				}
+				if parsedRequest.state == stateParsingBody {
+					clStr, _ = parsedRequest.Headers.Get(clHeader)
+					contentLength, err = strconv.Atoi(clStr)
+					if err != nil || contentLength < 0 {
+						return nil, fmt.Errorf("invalid Content-Length: %q", clStr)
+					}
+					if len(parsedRequest.Body) < contentLength {
+						return nil, fmt.Errorf("unexpected EOF: body shorter than Content-Length")
 					}
 				}
 				break

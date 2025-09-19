@@ -18,6 +18,7 @@ const (
 	fieldNameAllowedChars string = `^[A-Za-z0-9!#$%&'*+\-.^_` + "`" + `|~]+$`
 )
 
+// it's a global variable which is "bad", but it's calculated from constant expression, which is passable
 var validFieldNameRegex = regexp.MustCompile(fieldNameAllowedChars)
 
 func NewHeaders() Headers {
@@ -26,6 +27,11 @@ func NewHeaders() Headers {
 
 func isValidFieldName(fieldName string) bool {
 	return validFieldNameRegex.MatchString(fieldName)
+}
+
+func (h Headers) Get (key string) (string, bool) {
+	value, ok := h[strings.ToLower(key)]
+	return value, ok
 }
 
 func parseHeader(header []byte) (key string, value string, err error) {
