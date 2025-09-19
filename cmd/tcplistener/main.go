@@ -9,16 +9,18 @@ import (
 )
 
 const (
-	ExitError   int    = 1
-	localAddr   string = "127.0.0.1:42069"
+	ExitError int    = 1
+	localAddr string = "127.0.0.1:42069"
 )
 
 func main() {
 	var (
-		listener net.Listener
-		conn     net.Conn
-		r        *request.Request
-		err      error
+		listener  net.Listener
+		conn      net.Conn
+		r         *request.Request
+		err       error
+		headerKey string
+		headerVal string
 	)
 
 	listener, err = net.Listen("tcp", localAddr)
@@ -47,6 +49,10 @@ func main() {
 		fmt.Printf("- Target: %s\n", r.RequestLine.RequestTarget)
 		fmt.Printf("- Version: %s\n", r.RequestLine.HttpVersion)
 
+		fmt.Printf("Headers:\n")
+		for headerKey, headerVal = range r.Headers {
+			fmt.Printf("- %s: ", headerKey)
+			fmt.Printf("%s\n", headerVal)
+		}
 	}
-
 }

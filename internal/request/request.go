@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/RegistersNinja/httpfromtcp/internal/headers"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 	bufferSize                 int    = 8
 	initialized                int    = 0
 	done                       int    = 1
+	requestStateParsingHeaders int    = 3
 	twice                      int    = 2
 	ExitError                  int    = 1
 	ExitSuccess                int    = 0
@@ -31,6 +34,7 @@ func getHTTPVerbs() []string {
 
 type Request struct {
 	RequestLine RequestLine
+	Headers     headers.Headers
 	state       int
 }
 
@@ -54,15 +58,16 @@ func isValidHTTPVer(version string) bool {
 }
 
 func (r *Request) parse(data []byte) (int, error) {
-	var (
-		bytesParsed int
-		reqLine     RequestLine
-		err         error
-	)
+    var (
+        bytesParsed int
+        reqLine     RequestLine
+        err         error
+        status      bool
+    )
 
-	switch r.state {
-	case initialized:
-		reqLine, bytesParsed, err = parseRequestLine(data)
+    switch r.state {
+    case initialized:
+        reqLine, bytesParsed, err = parseRequestLine(data)
 
 		if err != nil {
 			return zeroBytesParsed, err
@@ -72,14 +77,26 @@ func (r *Request) parse(data []byte) (int, error) {
 		}
 
 		r.RequestLine = reqLine
-		r.state = done
+		r.state = requestStateParsingHeaders
 		return bytesParsed, nil
 
-	case done:
-		return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
-	default:
-		return zeroBytesParsed, fmt.Errorf("error: unknown state")
-	}
+    case requestStateParsingHeaders:
+        bytesParsed, status, err = r.Headers.Parse(data)
+        if err != nil {
+            return zeroBytesParsed, err
+        }
+        if bytesParsed == 0 {
+            return zeroBytesParsed, nil
+        }
+        if status {
+            r.state = done
+        }
+        return bytesParsed, nil
+    case done:
+        return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
+    default:
+        return zeroBytesParsed, fmt.Errorf("error: unknown state")
+    }
 
 }
 
@@ -138,7 +155,8 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 	buf = make([]byte, bufferSize)
 	readToIndex = 0
 	parsedRequest = &Request{
-		state: initialized,
+		state:   initialized,
+		Headers: headers.NewHeaders(),
 	}
 
 	for parsedRequest.state != done {
