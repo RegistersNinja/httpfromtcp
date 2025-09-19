@@ -92,4 +92,24 @@ func TestParseHeaders(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 0, n)
 	assert.False(t, done)
+
+	// Test: Multiple values for the same header key
+    headers = NewHeaders()
+    headers["set-person"] = "lane-loves-go" // Existing header key is lowercase
+    data = []byte("Set-Person: prime-loves-zig\r\nSet-Person: tj-loves-ocaml\r\n\r\n")
+
+    // Parse first header
+    n, done, err = headers.Parse(data)
+    require.NoError(t, err)
+    assert.False(t, done)
+    assert.Equal(t, "lane-loves-go, prime-loves-zig", headers["set-person"])
+    assert.Equal(t, 29, n) // "Set-Person: prime-loves-zig\r\n"
+
+    // Parse second header
+    data = data[n:]
+    n, done, err = headers.Parse(data)
+    require.NoError(t, err)
+    assert.False(t, done)
+    assert.Equal(t, "lane-loves-go, prime-loves-zig, tj-loves-ocaml", headers["set-person"])
+    assert.Equal(t, 28, n) // "Set-Person: tj-loves-ocaml\r\n"
 }

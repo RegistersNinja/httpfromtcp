@@ -63,10 +63,11 @@ func parseHeader(header []byte) (key string, value string, err error) {
 
 func (h Headers) Parse(data []byte) (bytesConsumed int, done bool, err error) {
 	var (
-		crlfSplit  [][]byte
-		header     []byte
-		fieldName  string
-		fieldValue string
+		crlfSplit        [][]byte
+		header           []byte
+		fieldName        string
+		fieldValue       string
+		isFieldNameInMap bool
 	)
 
 	crlfSplit = bytes.SplitN(data, []byte(crlf), 2)
@@ -86,7 +87,13 @@ func (h Headers) Parse(data []byte) (bytesConsumed int, done bool, err error) {
 		return bytesConsumed, done, err
 	}
 
-	h[fieldName] = fieldValue
+	_, isFieldNameInMap = h[fieldName]
+	if isFieldNameInMap {
+		h[fieldName] += (", " + fieldValue)
+	} else {
+		h[fieldName] = fieldValue
+	}
+
 	bytesConsumed = len(header) + len(crlf)
 	return bytesConsumed, done, nil
 }
