@@ -3,17 +3,25 @@ package request
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
 const (
 	httpVer                    string = "1.1"
+	forwardSlash               string = "/"
 	numberOfPartsInRequestLine int    = 3
 	methodPart                 int    = 0
 	pathPart                   int    = 1
 	versionPart                int    = 2
 	httpVersion                int    = 1
+	bufferSize                 int    = 8
+	initialized                int    = 0
+	done                       int    = 1
+	twice                      int    = 2
+	ExitError                  int    = 1
+	ExitSuccess                int    = 0
+	newLine                    string = "\r\n"
+	zeroBytesParsed            int    = 0
 )
 
 func getHTTPVerbs() []string {
@@ -23,6 +31,7 @@ func getHTTPVerbs() []string {
 
 type Request struct {
 	RequestLine RequestLine
+	state       int
 }
 
 type RequestLine struct {
@@ -44,64 +53,130 @@ func isValidHTTPVer(version string) bool {
 	return version == httpVer
 }
 
-func parseRequestLine(requestLine string) (RequestLine, error) {
-
+func (r *Request) parse(data []byte) (int, error) {
 	var (
-		method  string
-		target  string
-		version string
+		bytesParsed int
+		reqLine     RequestLine
+		err         error
 	)
-	parts := strings.SplitN(requestLine, " ", numberOfPartsInRequestLine)
+
+	switch r.state {
+	case initialized:
+		reqLine, bytesParsed, err = parseRequestLine(data)
+
+		if err != nil {
+			return zeroBytesParsed, err
+		}
+		if bytesParsed == 0 {
+			return zeroBytesParsed, nil
+		}
+
+		r.RequestLine = reqLine
+		r.state = done
+		return bytesParsed, nil
+
+	case done:
+		return zeroBytesParsed, fmt.Errorf("error: trying to read data in a done state")
+	default:
+		return zeroBytesParsed, fmt.Errorf("error: unknown state")
+	}
+
+}
+
+func parseRequestLine(data []byte) (RequestLine, int, error) {
+	var (
+		dataNewLineSplit []string
+		requestLine      string
+		method           string
+		target           string
+		version          string
+		bytesRead        int
+	)
+	bytesRead = 0
+	dataNewLineSplit = strings.Split(string(data), newLine)
+
+	if len(dataNewLineSplit) < 2 {
+		return RequestLine{}, 0, nil
+	}
+
+	requestLine = dataNewLineSplit[0]
+	bytesRead = len(requestLine) + len(newLine)
+	parts := strings.Split(requestLine, " ")
 	if len(parts) != numberOfPartsInRequestLine {
-		return RequestLine{}, fmt.Errorf("incorrect request line: expected %d parts, got %d", numberOfPartsInRequestLine, len(parts))
+		return RequestLine{}, bytesRead, fmt.Errorf("incorrect request line: expected %d parts, got %d", numberOfPartsInRequestLine, len(parts))
 	}
 
 	method = parts[methodPart]
 	target = parts[pathPart]
-	version = strings.Split(parts[versionPart], "/")[httpVersion]
+	version = strings.Split(parts[versionPart], forwardSlash)[httpVersion]
 
 	if !isValidHTTPVerb(parts[methodPart]) {
-		return RequestLine{}, fmt.Errorf("invalid HTTP method: %s", parts[methodPart])
+		return RequestLine{}, bytesRead, fmt.Errorf("invalid HTTP method: %s", parts[methodPart])
 	}
 
 	if !isValidHTTPVer(version) {
-		return RequestLine{}, fmt.Errorf("invalid HTTP version, expected %s, got: %s", httpVer, parts[versionPart])
+		return RequestLine{}, bytesRead, fmt.Errorf("invalid HTTP version, expected %s, got: %s", httpVer, parts[versionPart])
 	}
 	return RequestLine{
 		Method:        method,
 		RequestTarget: target,
 		HttpVersion:   version,
-	}, nil
+	}, bytesRead, nil
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	var (
-		requestRead       []byte
-		requestReadString string
-		requestLine       string
-		err               error
-		parsedLine        RequestLine
-		parsedRequest     *Request
+		buf           []byte
+		biggerBuf     []byte
+		readToIndex   int
+		bytesRead     int
+		bytesParsed   int
+		err           error
+		parsedRequest *Request
 	)
 
-	requestRead, err = io.ReadAll(reader)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read: %v\n", err)
-		return nil, err
-	}
-
-	requestReadString = string(requestRead)
-
-	requestLine = strings.Split(requestReadString, "\r\n")[0]
-
-	parsedLine, err = parseRequestLine(requestLine)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse request line: %v\n", err)
-		return nil, err
-	}
-
+	buf = make([]byte, bufferSize)
+	readToIndex = 0
 	parsedRequest = &Request{
-		RequestLine: parsedLine,
+		state: initialized,
+	}
+
+	for parsedRequest.state != done {
+		if readToIndex == len(buf) {
+			biggerBuf = make([]byte, twice*len(buf))
+			copy(biggerBuf, buf[:readToIndex])
+			buf = biggerBuf
+		}
+
+		bytesRead, err = reader.Read(buf[readToIndex:])
+		if err != nil {
+			if err == io.EOF {
+				if readToIndex > 0 {
+					bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
+					if err != nil {
+						return nil, fmt.Errorf("parse error: %s", err)
+					}
+					if bytesParsed > 0 {
+						copy(buf, buf[bytesParsed:readToIndex])
+						clear(buf[readToIndex-bytesParsed : readToIndex])
+						readToIndex -= bytesParsed
+					}
+				}
+				break
+			}
+
+			return nil, fmt.Errorf("read error: %s", err)
+		}
+		readToIndex += bytesRead
+
+		bytesParsed, err = parsedRequest.parse(buf[:readToIndex])
+		if err != nil {
+			return nil, fmt.Errorf("parse error: %s", err)
+		} else if bytesParsed != 0 {
+			copy(buf, buf[bytesParsed:readToIndex])
+			clear(buf[readToIndex-bytesParsed : readToIndex])
+			readToIndex -= bytesParsed
+		}
 	}
 
 	return parsedRequest, nil
