@@ -54,5 +54,8 @@ func main() {
 			fmt.Printf("- %s: ", headerKey)
 			fmt.Printf("%s\n", headerVal)
 		}
+
+		fmt.Printf("Body:\n")
+		fmt.Print(r.Body+"\n")		
 	}
 }
