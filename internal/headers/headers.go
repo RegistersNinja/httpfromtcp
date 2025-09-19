@@ -3,20 +3,29 @@ package headers
 import (
 	"bytes"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 type Headers map[string]string
 
 const (
-	crlf  string = "\r\n"
-	colon string = ":"
-	space string = " "
-	tab   string = "\t"
-	ows   string = " \t"
+	crlf                  string = "\r\n"
+	colon                 string = ":"
+	space                 string = " "
+	tab                   string = "\t"
+	ows                   string = " \t"
+	fieldNameAllowedChars string = `^[A-Za-z0-9!#$%&'*+\-.^_` + "`" + `|~]+$`
 )
+
+var validFieldNameRegex = regexp.MustCompile(fieldNameAllowedChars)
 
 func NewHeaders() Headers {
 	return map[string]string{}
+}
+
+func isValidFieldName(fieldName string) bool {
+	return validFieldNameRegex.MatchString(fieldName)
 }
 
 func parseHeader(header []byte) (key string, value string, err error) {
@@ -32,6 +41,10 @@ func parseHeader(header []byte) (key string, value string, err error) {
 	}
 
 	if colonIndex > 0 {
+		if colonIndex == 0 {
+			return key, value, fmt.Errorf("error: field-name must be at least one character long, got: %q", string(header))
+
+		}
 		byteBeforeColon = header[colonIndex-1]
 		if byteBeforeColon == space[0] || byteBeforeColon == tab[0] {
 			return key, value, fmt.Errorf("error: field name must not have whitespace before colon: %q", string(header[:colonIndex]))
@@ -39,27 +52,22 @@ func parseHeader(header []byte) (key string, value string, err error) {
 	}
 
 	namePart = bytes.TrimLeft(header[:colonIndex], ows)
-	if len(namePart) == 0 {
-		return key, value, fmt.Errorf("error: empty field-name")
+	if !isValidFieldName(string(namePart)) {
+		return key, value, fmt.Errorf("error: invalid field-name %q", string(namePart))
 	}
 
 	valPart = bytes.TrimSpace(header[colonIndex+1:])
 
-	return string(namePart), string(valPart), nil
+	return strings.ToLower(string(namePart)), string(valPart), nil
 }
 
-func (h Headers) Parse(data []byte) (n int, done bool, err error) {
+func (h Headers) Parse(data []byte) (bytesConsumed int, done bool, err error) {
 	var (
-		crlfSplit     [][]byte
-		header        []byte
-		bytesConsumed int
-		fieldName     string
-		fieldValue    string
+		crlfSplit  [][]byte
+		header     []byte
+		fieldName  string
+		fieldValue string
 	)
-
-	bytesConsumed = 0
-	done = false
-	err = nil
 
 	crlfSplit = bytes.SplitN(data, []byte(crlf), 2)
 	if len(crlfSplit) < 2 {
