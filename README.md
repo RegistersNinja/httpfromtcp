@@ -22,6 +22,10 @@ Almost all of the code was written without AI (apart from some menial tasks in c
 - Chunked proxy responses with trailer hashing
 - Simple static routes, including a demo MP4 streamer
 
+## License
+
+Distributed under the MIT License. See [`LICENSE`](./LICENSE) for details.
+
 ## Learn More
 
 - <a href="https://www.boot.dev/lessons/b0cebf37-7151-48db-ad8a-0f9399f94c58">Boot.dev: Build HTTP/1.1 from Scratch</a>
